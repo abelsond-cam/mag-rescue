@@ -1,9 +1,15 @@
 """Per-sample ARIBA worker (one Slurm array task = one accession).
 
 Idempotent: exits 0 if the accession's report.tsv already exists. Downloads
-fastqs from ENA over HTTPS, verifies md5, runs ``ariba run`` against the
-selected DB's prepareref output, copies a slim set of summary files to RDS,
-deletes scratch.
+fastqs from ENA over HTTPS, verifies md5, runs ``ariba run`` (via an
+apptainer/singularity container so we get a pysam 0.15-era ariba 2.13.3),
+copies a slim set of summary files to RDS, deletes scratch.
+
+Why a container? Modern pysam (>=0.16, when samtools 1.10 removed
+``mpileup -t/-u/-v``) breaks ariba's ``samtools_variants.py``. Pinning
+pysam<0.16 in pixi is impossible because that version only has Python 2
+wheels. The biocontainer ``ariba:2.13.3--py36hfc679d8_0`` ships a frozen
+env (ariba 2.13.3, pysam 0.15.0, samtools 1.9) that just works.
 
 Usage
 -----
@@ -12,6 +18,7 @@ Usage
         --accession SRR... --r1-url ... --r2-url ... --r1-md5 ... --r2-md5 ... \
         --workdir $SLURM_TMPDIR/<acc> \
         --run-dir <RDS>/.../mag_rescue/kleb_virulence/all \
+        --ariba-sif <path-to-container>.sif \
         --threads $SLURM_CPUS_PER_TASK [--detailed]
 """
 
@@ -82,6 +89,20 @@ def _prepareref_dir(db: str) -> Path:
     return REPO_ROOT / "refs" / db / "prepareref_out"
 
 
+def _apptainer_exec(ariba_sif: Path, bind_dirs: list[Path], cmd: list[str]) -> list[str]:
+    """Wrap an ``ariba ...`` invocation in ``apptainer exec`` with bind mounts.
+
+    Bind mounts use ``host:host`` so paths inside the container match the
+    host (saves us from rewriting argv paths). Caller is responsible for
+    making sure every path passed to the ariba cmd is reachable via one of
+    ``bind_dirs``.
+    """
+    binds: list[str] = []
+    for d in bind_dirs:
+        binds.extend(["-B", f"{d}:{d}"])
+    return ["apptainer", "exec", *binds, str(ariba_sif), *cmd]
+
+
 def _run(
     *,
     db: str,
@@ -92,6 +113,7 @@ def _run(
     r2_md5: str,
     workdir: Path,
     run_dir: Path,
+    ariba_sif: Path,
     threads: int,
     detailed: bool,
     ariba_timeout_min: int,
@@ -127,9 +149,10 @@ def _run(
     ariba_out = workdir / "ariba_out"
     if ariba_out.exists():
         shutil.rmtree(ariba_out)
-    ariba_cmd = [
-        "timeout",
-        f"{ariba_timeout_min}m",
+    if not ariba_sif.is_file():
+        logger.error("apptainer SIF missing: %s", ariba_sif)
+        return 2
+    inner_cmd = [
         "ariba",
         "run",
         "--threads",
@@ -139,7 +162,14 @@ def _run(
         str(r2),
         str(ariba_out),
     ]
-    logger.info("ariba run (threads=%d, timeout=%dm)", threads, ariba_timeout_min)
+    # Bind every dir an arg might reach into. Use parent dirs so writes work.
+    bind_dirs = [prep.parent.parent, workdir]
+    ariba_cmd = [
+        "timeout",
+        f"{ariba_timeout_min}m",
+        *_apptainer_exec(ariba_sif, bind_dirs, inner_cmd),
+    ]
+    logger.info("ariba run via apptainer (threads=%d, timeout=%dm)", threads, ariba_timeout_min)
     res = subprocess.run(ariba_cmd, check=False)
     if res.returncode != 0:
         logger.error("ariba run failed (rc=%d)", res.returncode)
@@ -178,6 +208,7 @@ def main() -> None:
     ap.add_argument("--r2-md5", required=True)
     ap.add_argument("--workdir", type=Path, required=True, help="Per-task scratch dir (e.g. $SLURM_TMPDIR/<acc>).")
     ap.add_argument("--run-dir", type=Path, required=True, help="<RDS>/.../mag_rescue/<db>/<run-name>/")
+    ap.add_argument("--ariba-sif", type=Path, required=True, help="Path to the ariba apptainer container.")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--detailed", action="store_true", help="Also keep assembled_seqs.fa.gz + assemblies.fa.gz.")
     ap.add_argument("--ariba-timeout-min", type=int, default=90, help="Per-sample ariba run wall-time cap.")
@@ -201,6 +232,7 @@ def main() -> None:
         r2_md5=args.r2_md5,
         workdir=args.workdir,
         run_dir=args.run_dir,
+        ariba_sif=args.ariba_sif,
         threads=args.threads,
         detailed=args.detailed,
         ariba_timeout_min=args.ariba_timeout_min,

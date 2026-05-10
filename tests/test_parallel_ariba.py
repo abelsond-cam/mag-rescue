@@ -58,6 +58,7 @@ def test_build_sbatch_cmd_passes_all_env_vars(tmp_path: Path):
         run_dir=tmp_path / "rd",
         slurm_logs_dir=tmp_path / "slurm_logs",
         array_spec="1-10%5",
+        ariba_sif=Path("/sif/ariba.sif"),
         subset_metadata=None,
     )
     assert cmd[0] == "sbatch"
@@ -65,7 +66,15 @@ def test_build_sbatch_cmd_passes_all_env_vars(tmp_path: Path):
     assert any(a.startswith("--output=") and a.endswith("/mag-ariba_%A_%a.out") for a in cmd)
     export = next(a for a in cmd if a.startswith("--export="))
     # Required env vars all present in --export
-    for var in ("ALL", "LIST_FILE=", "DB=kleb_virulence", "RUN_DIR=", "REPO_DIR=/repo", "SUBSET_METADATA="):
+    for var in (
+        "ALL",
+        "LIST_FILE=",
+        "DB=kleb_virulence",
+        "RUN_DIR=",
+        "REPO_DIR=/repo",
+        "ARIBA_SIF=/sif/ariba.sif",
+        "SUBSET_METADATA=",
+    ):
         assert var in export, f"missing {var} in {export}"
     assert cmd[-1].endswith("ariba_array.sh")
 
@@ -79,6 +88,7 @@ def test_build_sbatch_cmd_includes_subset_metadata_path(tmp_path: Path):
         run_dir=tmp_path / "rd",
         slurm_logs_dir=tmp_path / "slurm_logs",
         array_spec="1-1%1",
+        ariba_sif=Path("/sif/ariba.sif"),
         subset_metadata=vip,
     )
     export = next(a for a in cmd if a.startswith("--export="))

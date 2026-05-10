@@ -124,13 +124,13 @@ def _build_metadata(inputs_root: Path, modules: list[tuple[str, str]]) -> str:
     return "\n".join(rows) + "\n"
 
 
-def _check_ariba_on_path() -> None:
-    if shutil.which("ariba") is None:
-        logger.error("`ariba` not found on PATH. Are you running inside `pixi run -e dev ...`?")
+def _check_apptainer_on_path() -> None:
+    if shutil.which("apptainer") is None and shutil.which("singularity") is None:
+        logger.error("Neither `apptainer` nor `singularity` on PATH. ariba runs in a container.")
         sys.exit(1)
 
 
-def build(db_name: str, *, force: bool = False, threads: int = 1) -> None:
+def build(db_name: str, *, ariba_sif: Path, force: bool = False, threads: int = 1) -> None:
     """Vendor source FASTAs, write metadata + manifest, run ``ariba prepareref``."""
     spec = DB_REGISTRY[db_name]
     db_root = REPO_ROOT / "refs" / db_name
@@ -139,7 +139,10 @@ def build(db_name: str, *, force: bool = False, threads: int = 1) -> None:
     manifest_path = db_root / "manifest.json"
     prepareref_out = db_root / "prepareref_out"
 
-    _check_ariba_on_path()
+    _check_apptainer_on_path()
+    if not ariba_sif.is_file():
+        logger.error("apptainer SIF missing: %s", ariba_sif)
+        sys.exit(2)
 
     if prepareref_out.exists() and not force:
         logger.error("%s already exists; pass --force to rebuild", prepareref_out)
@@ -185,7 +188,7 @@ def build(db_name: str, *, force: bool = False, threads: int = 1) -> None:
     for mod, _cluster in spec["modules"]:
         for fasta in sorted((inputs_root / mod).glob("*.fasta")):
             fasta_args.extend(["-f", str(fasta)])
-    cmd = [
+    inner_cmd = [
         "ariba",
         "prepareref",
         *fasta_args,
@@ -195,7 +198,8 @@ def build(db_name: str, *, force: bool = False, threads: int = 1) -> None:
         str(threads),
         str(prepareref_out),
     ]
-    logger.info("Running ariba prepareref → %s", prepareref_out.relative_to(REPO_ROOT))
+    cmd = ["apptainer", "exec", "-B", f"{db_root}:{db_root}", str(ariba_sif), *inner_cmd]
+    logger.info("Running ariba prepareref (containerised) → %s", prepareref_out.relative_to(REPO_ROOT))
     res = subprocess.run(cmd, check=False)
     if res.returncode != 0:
         logger.error("ariba prepareref failed (returncode %d)", res.returncode)
@@ -214,12 +218,13 @@ def main() -> None:
         const="kleb_virulence",
         help="Build the Kleborate-derived virulence DB (5 loci: ybt/clb/iuc/iro/rmp).",
     )
+    ap.add_argument("--ariba-sif", type=Path, required=True, help="Path to the ariba apptainer container.")
     ap.add_argument("--force", action="store_true", help="Rebuild even if prepareref_out/ exists.")
     ap.add_argument("--threads", type=int, default=1, help="Threads for cd-hit inside prepareref.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
-    build(args.db, force=args.force, threads=args.threads)
+    build(args.db, ariba_sif=args.ariba_sif, force=args.force, threads=args.threads)
 
 
 if __name__ == "__main__":

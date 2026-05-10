@@ -72,37 +72,63 @@ Idempotent: skip if output TSV exists.
 
 ## Env management
 
-Pixi is the single dependency manager. ARIBA's binary deps (bowtie2, samtools, mummer, cd-hit, spades) come from bioconda; `ariba` itself comes from PyPI. The lock file is multi-platform (osx-arm64 + linux-64) — same lock works locally and on HPC.
+Pixi manages our **own** code's runtime (Python + pandas + biopython + tqdm + requests). **ARIBA itself runs in an apptainer (Singularity) container**, not in pixi. Likewise samtools, bowtie2, spades, mummer, cd-hit, pysam — they all live inside the container.
 
-### Platform split — local mac is for editing, HPC runs the pipeline
+### Why a container for ARIBA?
 
-`pixi.toml` declares two platforms: `osx-arm64` (local Apple Silicon dev) and `linux-64` (HPC + CI). The Python deps in the default `[dependencies]` table are cross-platform; the bioinformatics binaries and ARIBA itself are scoped to `[target.linux-64...]` only. Three reasons it has to be this way:
+ARIBA is unmaintained since ~2019 and is incompatible with the modern bioinformatics stack:
 
-1. **ARIBA does not build on Apple Silicon.** ARIBA bundles C code that uses x86 SSE intrinsics (`__m64`, `mmintrin.h`). `pip install ariba` on osx-arm64 fails with clang errors like "invalid conversion between vector type `__m64` and integer type". So `ariba` lives under `[target.linux-64.pypi-dependencies]`.
-2. **`kleborate` is linux-only on bioconda.** It depends on `stxtyper`, which currently has no osx-arm64 build. Since kleborate is only consumed at ref-build time (vendoring FASTAs into `refs/kleb_virulence/inputs/`), and that runs on HPC anyway, this is fine.
-3. **`pymummer` (an ARIBA dep) needs `nucmer` on PATH at build time, not just install time.** Its `setup.py` probes for the MUMmer binaries before the wheel is built and aborts if they aren't found. With pip's default *build isolation*, the build venv is fresh and doesn't see the conda-installed `mummer` binaries — the build fails. We work around this with:
+1. **ARIBA does not build on Apple Silicon.** ARIBA bundles C with x86 SSE intrinsics (`__m64`, `mmintrin.h`). Local mac dev cannot run the pipeline regardless — only HPC.
+2. **`pymummer` (an ARIBA dep) probes for `nucmer` at build time.** pip's default build isolation hides conda binaries from the build venv, so `pip install ariba` fails.
+3. **ARIBA's `__init__.py` imports `pkg_resources`** — removed from `setuptools` 80+ (Aug 2025).
+4. **ARIBA's `samtools_variants.py` calls `pysam.mpileup('-t', '-u', '-v', ...)`.** Those options were removed in samtools 1.10 / pysam 0.16 (Jan-Apr 2020) when BCF/VCF output moved to bcftools. We can't pin pysam <0.16 in pixi because that version only has Python 2 wheels.
 
-   ```toml
-   [pypi-options]
-   no-build-isolation = ["pymummer", "ariba"]
-   ```
+(1) is unavoidable. (2), (3), (4) compound: ARIBA only works against a frozen 2019-era env that pixi can't reach from Python 3.12.
 
-   Build isolation is then disabled for those two packages; pip uses the active pixi env (which has `mummer`) and the build sees `nucmer` on PATH. Without this entry, `pixi install -e dev` will fail on linux-64 with `Cannot install because some programs from the MUMer package not found`.
-4. **ARIBA needs `setuptools <80` at runtime.** Its `__init__.py` does `from pkg_resources import get_distribution`. `pkg_resources` shipped in `setuptools` for years as deprecated, and was finally removed in setuptools 80. ARIBA still imports it. So `setuptools = "<80"` is an explicit `[target.linux-64.dependencies]` entry; without the upper bound `ariba version` fails with `ModuleNotFoundError: No module named 'pkg_resources'` even though setuptools is installed.
-5. **ARIBA needs `samtools <1.10` at runtime.** Its `samtools_variants.py` calls `pysam.mpileup('-t', 'INFO/AD,INFO/ADF,INFO/ADR', ...)`. The `-t` option to `samtools mpileup` was removed in samtools 1.10 (released Jan 2020) — replaced by the bcftools mpileup pipeline. With newer samtools, every per-cluster ariba worker dies with `mpileup: invalid option -- 't'`, the parent kills siblings with SIGTERM, and the whole `ariba run` returns rc=1. We pin `samtools = "<1.10"` in `[target.linux-64.dependencies]`. Surfaced as "Signal 15 received in cluster cluster_X" in slurm `.err` logs for the CG39 cohort run on 2026-05-10.
+The fix: **biocontainer `quay.io/biocontainers/ariba:2.13.3--py36hfc679d8_0`**, which ships:
+- ariba 2.13.3
+- pysam 0.15.0
+- samtools 1.9 (bundled in pysam)
+- bowtie2, spades, mummer, cd-hit, fermi-lite — all working versions
 
-Net effect: on macOS you can edit, lint, run unit tests, and import the package, but `pixi run` of anything that touches ARIBA only works on HPC. CI (linux-64) exercises the full pipeline.
-
-### Bringing up the env on a fresh machine
+Pull once on HPC:
 
 ```bash
-# one-time pixi install (skip if already on PATH)
-curl -fsSL https://pixi.sh/install.sh | bash
+apptainer pull --name ariba_213.sif docker://quay.io/biocontainers/ariba:2.13.3--py36hfc679d8_0
+```
 
+The container is committed nowhere — it's ~200 MB and lives on RDS at `<RDS>/processed/mag_rescue/containers/ariba_213.sif`.
+
+### pixi.toml layout
+
+Three environments, two on the cross-platform `[dependencies]` table:
+
+| env | features | purpose |
+|---|---|---|
+| `default` | (none) | runtime (our Python wrappers — pandas, biopython, requests, etc.) |
+| `dev` | `dev` | + pytest, ruff, pre-commit |
+| `refbuild` | `refbuild` (linux-64 only) | + kleborate, for the one-off ref-DB vendoring |
+
+The `runtime` solve-group shared by default+dev keeps the dev env identical to production for the wrappers. The `refbuild` env is isolated so kleborate's transitive deps don't constrain runtime.
+
+### Bringing up on a fresh machine
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | bash   # skip if already on PATH
 cd <repo>
-pixi install -e dev   # solves and installs the dev env from pixi.lock
+pixi install -e dev
 pixi run -e dev test
 pixi run -e dev lint
 ```
 
-On HPC, the same lockfile is used — pixi resolves the linux-64 entries from it. Pixi version on HPC must be ≥ the version that wrote the lockfile (lockfile schema v6 needs pixi 0.68+); update with `curl -fsSL https://pixi.sh/install.sh | bash` if older.
+On HPC, the same lockfile applies (it's multi-platform: osx-arm64 + linux-64). Pixi version must be ≥0.68 (lockfile schema v6).
+
+Container pull is a separate one-off:
+
+```bash
+mkdir -p ~/rds/.../processed/mag_rescue/containers
+cd ~/rds/.../processed/mag_rescue/containers
+apptainer pull --name ariba_213.sif docker://quay.io/biocontainers/ariba:2.13.3--py36hfc679d8_0
+```
+
+Then pass `--ariba-sif <path>` to `pp/run_ariba.py`, `pp/build_ariba_ref.py`, and `pp/parallel_ariba.py submit`.

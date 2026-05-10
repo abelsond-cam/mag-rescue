@@ -84,6 +84,7 @@ def _build_sbatch_cmd(
     run_dir: Path,
     slurm_logs_dir: Path,
     array_spec: str,
+    ariba_sif: Path,
     subset_metadata: Path | None,
 ) -> list[str]:
     """Compose the sbatch command. Returns the argv list (subprocess-ready)."""
@@ -92,7 +93,8 @@ def _build_sbatch_cmd(
     error_pat = slurm_logs_dir / "mag-ariba_%A_%a.err"
     export = (
         f"ALL,LIST_FILE={list_path},DB={db},RUN_DIR={run_dir},"
-        f"REPO_DIR={repo_dir},SUBSET_METADATA={subset_metadata or ''}"
+        f"REPO_DIR={repo_dir},ARIBA_SIF={ariba_sif},"
+        f"SUBSET_METADATA={subset_metadata or ''}"
     )
     return [
         "sbatch",
@@ -169,6 +171,9 @@ def cmd_submit(args: argparse.Namespace) -> int:
     if not list_path.is_file():
         logger.error("list file missing: %s", list_path)
         return 1
+    if not args.ariba_sif.is_file():
+        logger.error("ariba SIF missing: %s", args.ariba_sif)
+        return 1
     n_total = _count_data_rows(list_path)
     array_spec = _array_spec_range(n_total, args.n_samples, args.concurrency)
     cmd = _build_sbatch_cmd(
@@ -178,6 +183,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         run_dir=_run_dir(args.mag_rescue_root, args.db, args.run_name),
         slurm_logs_dir=_slurm_logs_dir(args.mag_rescue_root),
         array_spec=array_spec,
+        ariba_sif=args.ariba_sif,
         subset_metadata=args.subset_metadata,
     )
     logger.info("array spec: %s  (n_total=%d, n_samples=%d)", array_spec, n_total, args.n_samples)
@@ -236,6 +242,7 @@ def cmd_retry(args: argparse.Namespace) -> int:
         run_dir=_run_dir(args.mag_rescue_root, args.db, args.run_name),
         slurm_logs_dir=_slurm_logs_dir(args.mag_rescue_root),
         array_spec=array_spec,
+        ariba_sif=args.ariba_sif,
         subset_metadata=args.subset_metadata,
     )
     logger.info("retry %d failed indices from job %s", len(indices), args.job_id)
@@ -259,6 +266,7 @@ def _add_shared_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--run-name", default="all", help="Run name under <db>/ (default: all).")
     p.add_argument("--mag-rescue-root", type=Path, required=True, help="<RDS>/processed/mag_rescue/")
     p.add_argument("--repo-dir", type=Path, required=True, help="Path to the cloned mag-rescue repo on HPC.")
+    p.add_argument("--ariba-sif", type=Path, required=True, help="Path to the ariba apptainer container.")
     p.add_argument("--list-filename", default=DEFAULT_LIST_FILENAME)
     p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     p.add_argument("--subset-metadata", type=Path, default=None)

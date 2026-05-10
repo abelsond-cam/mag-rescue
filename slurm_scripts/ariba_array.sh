@@ -19,6 +19,7 @@
 #   RUN_DIR     absolute path to the run output dir on RDS, e.g.
 #               <RDS>/processed/mag_rescue/kleb_virulence/all
 #   REPO_DIR    absolute path to the cloned mag-rescue repo (where pixi.toml lives)
+#   ARIBA_SIF   absolute path to the ariba apptainer container (.sif)
 # Optional:
 #   SUBSET_METADATA   absolute path to a one-column file of accessions; matching
 #                     accessions get --detailed
@@ -33,6 +34,7 @@ set -euo pipefail
 : "${DB:?DB not set}"
 : "${RUN_DIR:?RUN_DIR not set}"
 : "${REPO_DIR:?REPO_DIR not set}"
+: "${ARIBA_SIF:?ARIBA_SIF not set}"
 : "${SUBSET_METADATA:=}"
 : "${SLURM_ARRAY_TASK_ID:?must run as a Slurm array job}"
 : "${SLURM_CPUS_PER_TASK:=4}"
@@ -74,5 +76,6 @@ exec pixi run -e dev python -m mag_rescue.pp.run_ariba \
     --r1-md5 "${R1_MD5}" --r2-md5 "${R2_MD5}" \
     --workdir "${WORKDIR}" \
     --run-dir "${RUN_DIR}" \
+    --ariba-sif "${ARIBA_SIF}" \
     --threads "${SLURM_CPUS_PER_TASK}" \
     ${DETAILED_FLAG}
