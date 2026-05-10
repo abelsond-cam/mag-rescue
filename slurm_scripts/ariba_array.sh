@@ -37,8 +37,10 @@ set -euo pipefail
 : "${SLURM_ARRAY_TASK_ID:?must run as a Slurm array job}"
 : "${SLURM_CPUS_PER_TASK:=4}"
 
-# Slurm gives each task its own $SLURM_TMPDIR; clean on exit either way.
-WORKDIR="${SLURM_TMPDIR}/task_${SLURM_ARRAY_TASK_ID}"
+# CSD3 doesn't always set $SLURM_TMPDIR — fall back to $TMPDIR, then /tmp.
+# This matches the Bacotype convention.
+SCRATCH_BASE="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}"
+WORKDIR="${SCRATCH_BASE}/mag-ariba_${SLURM_JOB_ID:-local}_task${SLURM_ARRAY_TASK_ID}"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
 # Read line N+1 (skip header).
