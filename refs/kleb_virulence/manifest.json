@@ -1,0 +1,91 @@
+{
+  "db_name": "kleb_virulence",
+  "built_utc": "2026-05-10T14:21:18+00:00",
+  "source_pkg": "kleborate",
+  "source_pkg_version": "3.0.0",
+  "source_pkg_path": "/home/dca36/workspace/mag-rescue/.pixi/envs/dev/lib/python3.12/site-packages/kleborate",
+  "modules": [
+    {
+      "name": "klebsiella__ybst",
+      "cluster": "ybt"
+    },
+    {
+      "name": "klebsiella__cbst",
+      "cluster": "clb"
+    },
+    {
+      "name": "klebsiella__abst",
+      "cluster": "iuc"
+    },
+    {
+      "name": "klebsiella__smst",
+      "cluster": "iro"
+    },
+    {
+      "name": "klebsiella__rmst",
+      "cluster": "rmp"
+    },
+    {
+      "name": "klebsiella__rmpa2",
+      "cluster": "rmp"
+    }
+  ],
+  "file_sha256": {
+    "klebsiella__ybst": {
+      "fyuA.fasta": "2707d84742619aa91b6f3c7741b2cda21510d2f9e00e48bcd95b175a99e1b15c",
+      "irp1.fasta": "c3ecb7177602290a26a777f991df31fc2a6202ebcff43429807c3de0d2ba9dc3",
+      "irp2.fasta": "5a7b79db527f89946986e33ebafc8b166c3b3a256d51ec84a3d77ea127754827",
+      "profiles.tsv": "f3d87a3d711c4ca89f6a916219ad1a309b5cdde699721ee3bf43153a865d88ea",
+      "ybtA.fasta": "72b8cbaf7f305a24e8eb8d572f3f35185226084478584a5a8541bd5ff0e75fd5",
+      "ybtE.fasta": "0af0a7cc062933137808dd3b0e94b61703a12752de75268c9504c52e94f906f6",
+      "ybtP.fasta": "23f872dcb270a11943a1f9404b168e188ac4efeb3dbeda28c2bf5eae1072de52",
+      "ybtQ.fasta": "83b9e6a2da68978d5873833464564d8fd6aa4f54a68e74e5c9a847d884bf8aff",
+      "ybtS.fasta": "af5051655fe3aeed9ad3704225f7952d48ba41c6ea178c0da55fc776592acdfe",
+      "ybtT.fasta": "d1c592109c02492db9888e99871d2f7fec899cae8561913df0806a3d4341f859",
+      "ybtU.fasta": "77957a22457ab3a64a52d687f39624b960cc9d12388b204327c8bebfe2437990",
+      "ybtX.fasta": "2d5d84716ab72d43ebf1f1a21f1a532ade9bb612a37107235be404d392151826"
+    },
+    "klebsiella__cbst": {
+      "clbA.fasta": "40d0c208d015616b5035bea012d683679e1e2cb33c1ec50b267272cf358c4b36",
+      "clbB.fasta": "d7208a5dec14595cd739d6a4ccb651796afebb437067245f537106eaa30cb00f",
+      "clbC.fasta": "6371b02858f5dad04dca3c35c5c9240bb7c9ae4044c35d81b8bf7368d83c2741",
+      "clbD.fasta": "0b97fc4f0e8843b427c9de49626b4ad008cb699658ccbff8e8d84ca07ef1293b",
+      "clbE.fasta": "573de6ff94f23fe6f2c18917ace1133ce698534a1ca6dcbeacdf4b1dcd9865f6",
+      "clbF.fasta": "9438b32b8d12424180b3133aa7d09fab0efa2c60a8771d77b093cd271068a203",
+      "clbG.fasta": "92fd1f9a1b724aa22ddf364223329b82733add74bafc154dcd4d8b5f3194af50",
+      "clbH.fasta": "33e27e4c82a30f515a47ff27ae3e95b9357601f7de854feaaa7c81b5e1cc2bae",
+      "clbI.fasta": "c046a6b272c3f25e4e1a435abda915145650e7da80749632e75ce4a0d40586e6",
+      "clbL.fasta": "b7b2ba0515575149a6a945ca478f5cc21646488abc762be2e976b41b6606beb7",
+      "clbM.fasta": "015fba3580783384b9de6bd44e1bc1dac039d65d2e14bd78a903f778785025d1",
+      "clbN.fasta": "245a19df77b79d915c19d1987afbb33382c13f1123a039d28b78df73667d0034",
+      "clbO.fasta": "ac4b802c5c3abe6dc7b135eb386be66b345c34415afaae562e44ca9263831348",
+      "clbP.fasta": "62592537251240d61d29434aa31e05a9caa320963cfc3404a8f9544aa4747375",
+      "clbQ.fasta": "df136795118be8359e7d7a4601d20c70e824f7414fee02cd59eef8437f61cee3",
+      "profiles.tsv": "819ae696c4f65e9524265ec9f7a73ec474e2351832d6abc99f8e151f2330c428"
+    },
+    "klebsiella__abst": {
+      "iucA.fasta": "2e86e0c88ddd05fb5ddcf25983d53da66efb4719078102ff8aa24553cc80a79b",
+      "iucB.fasta": "3c1380b398ec8b4b5d8acb14cbf7a3f8ab77ca295ce6d0ec3ec4befe38a57040",
+      "iucC.fasta": "cec5f87090b649ea9871fd72754749351fd784b5c5dc12ec795fdd5ce123242c",
+      "iucD.fasta": "ca6ed0317b6b5914e36e32156e8fc7965d372b02ba6ca38a5168e0422569635e",
+      "iutA.fasta": "9de28c3e1b08460b49c13fc735d8f4bd92a5894b8294f64449fc5b6c13f8a5cc",
+      "profiles.tsv": "3ee2aa2ffcc95bd953d761dbfd3220d03ba39d4ba3ca071afd54560572895673"
+    },
+    "klebsiella__smst": {
+      "iroB.fasta": "a82afb1aa530147a14989e81574605d73b009756ad62ce2463e6cf3c5eacd4c3",
+      "iroC.fasta": "ca3b11142191f86425f79d841a1aa51238b20798ac0ef9097b342891f0e616e7",
+      "iroD.fasta": "cbe23e6d847c265829440b08fbe504310798be6367dafa4e1d5e9b6c19ee7df0",
+      "iroN.fasta": "480a88aa78f3927d887f950d2eb51f788db33336f072f1b915efbe045f8750e4",
+      "profiles.tsv": "f6977152eb537262f9ec9d728c3a31a826793d3a544d45006a094bdb1833072b"
+    },
+    "klebsiella__rmst": {
+      "profiles.tsv": "f140599f83f7f5aa80e741c6866cd3f04a5d215113af0c81def8749dddc2c9fc",
+      "rmpA.fasta": "a32d69b65e7b959c761339977cbda78800da4efd1d6551dbbd6306634f8cf2ac",
+      "rmpC.fasta": "cac4391dd68887e85f8cc13b9422cfdcede7aaf81dd39a45e986987758822c73",
+      "rmpD.fasta": "cff6bcfbe3f09f6ccbf7d226c3c9f9c565fb27d9d8424577c81c0c8d31eef107"
+    },
+    "klebsiella__rmpa2": {
+      "rmpA2.fasta": "def50e938d592730934b11b94445d0340586431aaadde5394b0dfde167959134"
+    }
+  }
+}
