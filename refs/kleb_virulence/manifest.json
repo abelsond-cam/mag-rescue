@@ -1,8 +1,8 @@
 {
   "db_name": "kleb_virulence",
-  "built_utc": "2026-05-10T14:21:18+00:00",
+  "built_utc": "2026-05-10T14:42:17+00:00",
   "source_pkg": "kleborate",
-  "source_pkg_version": "3.0.0",
+  "source_pkg_version": "3.2.4",
   "source_pkg_path": "/home/dca36/workspace/mag-rescue/.pixi/envs/dev/lib/python3.12/site-packages/kleborate",
   "modules": [
     {
