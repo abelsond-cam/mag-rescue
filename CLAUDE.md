@@ -11,15 +11,34 @@ Sibling repo: [Bacotype](https://github.com/abelsond-cam/Bacotype) — pangenome
 ## Commands
 
 ```bash
-pixi install                    # solve and install env (osx-arm64 + linux-64)
-pixi run test                   # pytest
-pixi run lint                   # ruff check + format --check
-pixi run fmt                    # ruff format
+pixi install -e dev             # solve + install dev env (cross-platform lock)
+pixi run -e dev test            # pytest
+pixi run -e dev lint            # ruff check + format --check
+pixi run -e dev fmt             # ruff format
 
-pixi run python -m mag_rescue.pp.build_ariba_ref --kleb-virulence   # build ref DB (Phase 4, future)
+# Build a reference DB (one-off; uses a separate `refbuild` env that has kleborate).
+pixi run -e refbuild python -m mag_rescue.pp.build_ariba_ref \
+    --kleb-virulence --ariba-sif <RDS>/.../containers/ariba_213.sif
+
+# Extract a cohort accession list (HPC only — reads Bacotype's metadata).
+pixi run -e dev python -m mag_rescue.pp.extract_accessions \
+    --metadata <RDS>/.../final/metadata_final_curated_all_samples_and_columns.tsv \
+    --outdir   <RDS>/.../processed/mag_rescue/kleb_virulence/<cohort>/accessions \
+    --version v1 [--sublineage SL23 | --clonal-group CG39]
+
+# Submit a Slurm array (uses parallel_ariba.py to compose sbatch).
+pixi run -e dev python -m mag_rescue.pp.parallel_ariba submit \
+    --db kleb_virulence --run-name <cohort> \
+    --mag-rescue-root <RDS>/.../processed/mag_rescue \
+    --repo-dir ~/workspace/mag-rescue \
+    --ariba-sif <RDS>/.../containers/ariba_213.sif
+
+# After completion: tally + compare to Bacotype's penetrance.
+pixi run -e dev python -m mag_rescue.tl.assess_recovery \
+    --ariba-run-dir <RDS>/.../mag_rescue/kleb_virulence/<cohort> \
+    --cohort <cohort> \
+    --bacotype-dir <RDS>/.../complete_vs_sr_genomes
 ```
-
-Production scripts run on Slurm: edit knobs at the top of the relevant `slurm_scripts/*.sh`, then `sbatch`.
 
 ## HPC connection
 
@@ -50,19 +69,30 @@ refs/<db_name>/
   prepareref_out/   # built artefact (gitignored — rebuilt by `ariba prepareref`)
 ```
 
-Adding a new DB (`--amr`, `--mlst`, …) means: vendor FASTAs, write `metadata.tsv`, register the flag in `pp/build_ariba_ref.py` and `pp/run_ariba.py`. The runner stays one shape.
+Adding a new DB (`--amr`, `--mlst`, …): vendor FASTAs, write `metadata.tsv`, then register the DB name in two places:
+- `pp/build_ariba_ref.py:DB_REGISTRY` (build-time module list)
+- `tl/assess_recovery.py:DB_LOCI` (per-locus tally + Bacotype-feature mapping)
+
+The runner (`pp/run_ariba.py`) is DB-agnostic — it just resolves `refs/<db>/prepareref_out/` from the `--db` flag.
 
 ## Pipeline shape
 
-Per-sample worker (Phase 5):
+Four scripts wired by Slurm:
 
-1. Take an accession (SRR/ERR).
-2. `prefetch` → `fasterq-dump --threads $SLURM_CPUS_PER_TASK` into `$SLURM_TMPDIR`.
-3. `ariba run refs/<db>/prepareref_out/ <r1> <r2> $SLURM_TMPDIR/out`.
-4. Copy report TSV to RDS.
-5. Delete scratch fastqs.
+1. **`pp/extract_accessions.py`** (one-shot) — filter Bacotype's metadata to a 5-col TSV (`run_accession, r1_url, r2_url, r1_md5, r2_md5`). Optional `--sublineage` / `--clonal-group` for cohort runs.
+2. **`pp/parallel_ariba.py submit`** — compose + sbatch the array against that list. Subcommands: `submit`, `status`, `retry` (re-submits failed indices via sacct).
+3. **`slurm_scripts/ariba_array.sh`** — thin shim per array task; reads line N of the list, calls `pp/run_ariba.py`. icelake-himem partition, 4 cpus, 12 GB, 2 h.
+4. **`pp/run_ariba.py`** — per-sample worker: `curl` R1+R2 from ENA → md5 verify → `apptainer exec ariba_213.sif ariba run` → atomic copy `report.tsv` (and optionally `assembled_seqs.fa.gz` + `assemblies.fa.gz` with `--detailed`) to RDS → cleanup scratch. Idempotent on `report.tsv` presence.
+5. **`tl/assess_recovery.py`** — post-hoc: tally per-locus presence + gene completeness; if Bacotype's `complete_vs_sr_genomes/penetrance/<cohort>.csv` is around, emit comparison tables. Output: `<run-dir>/assessment/<cohort>_recovery.{md,tsv}`.
 
-Idempotent: skip if output TSV exists.
+Outputs land at `<RDS>/processed/mag_rescue/<db>/<run-name>/{reports,sample_logs,assembled_seqs,assemblies,accessions,assessment}/`. Slurm stdout/stderr at `<RDS>/processed/mag_rescue/slurm_logs/`.
+
+## Project state (2026-05-10)
+
+- Phase 4 ref DB built: `refs/kleb_virulence/` (kleborate 3.2.4, 39 alleles → 55 CD-HIT clusters).
+- CG39 cohort run complete: 612/665 samples (47 transient curl failures, 5 stale-md5 ENA mismatches). Initial findings: ARIBA rescues iro/rmpADC/rmpa2/clb (4–21× over Bacotype's existing SR detection); ybt and iuc match the existing rate. See `<RDS>/.../CG39/assessment/CG39_recovery.md`.
+- SL23, CG307, CG340 arrays in flight (jobs 29161949 / 29161950 / 29161952).
+- Hard rows (~2,000 mixed-platform / multi-run) deferred — see `<accessions>/kleb_short_reads_v1.skipped.tsv`.
 
 ## Code style
 
