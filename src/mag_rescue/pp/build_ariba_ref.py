@@ -19,6 +19,7 @@ import argparse
 import datetime as dt
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import logging
 import shutil
@@ -55,7 +56,18 @@ def _sha256(path: Path) -> str:
 
 
 def _source_pkg_version(pkg) -> str:
-    """Return the package version, falling back to reading version.py."""
+    """Return the installed package version.
+
+    Prefers ``importlib.metadata.version()`` (reads the dist-info recorded by
+    the package manager — conda/pip), then falls back to ``pkg.__version__``,
+    then to a ``version.py`` ``__version__`` global. The metadata path matters
+    because some packages (e.g. kleborate) ship a ``version.py`` whose string
+    drifts from the actual installed version.
+    """
+    try:
+        return importlib.metadata.version(pkg.__name__)
+    except importlib.metadata.PackageNotFoundError:
+        pass
     if hasattr(pkg, "__version__"):
         return str(pkg.__version__)
     version_py = Path(pkg.__file__).resolve().parent / "version.py"
