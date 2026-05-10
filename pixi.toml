@@ -11,7 +11,9 @@ test = "pytest tests/"
 lint = "ruff check src/ tests/ && ruff format --check src/ tests/"
 fmt = "ruff format src/ tests/"
 
-# Cross-platform Python deps (so local osx-arm64 dev can edit, lint, and unit-test).
+# Cross-platform Python deps — present in every env so local osx-arm64 dev can
+# edit/lint/test even though the ariba-runtime + kleborate-refbuild stacks are
+# linux-only.
 [dependencies]
 python = "3.12.*"
 pandas = ">=2.2"
@@ -20,41 +22,52 @@ biopython = ">=1.83"
 tqdm = ">=4.66"
 requests = ">=2.31"
 
-# Pure-Python project install — works everywhere.
 [pypi-dependencies]
 mag-rescue = { path = ".", editable = true }
 
-# Linux-only: ARIBA's binary deps + ariba itself + kleborate (stxtyper is linux-only).
-# Local osx-arm64 dev can't run the pipeline — production is HPC.
-[target.linux-64.dependencies]
+# Disable pip build isolation for ariba/pymummer so the conda-installed
+# mummer binaries are visible on PATH during pymummer's setup.py probe.
+[pypi-options]
+no-build-isolation = ["pymummer", "ariba"]
+
+# -------- runtime feature (default + dev): the ariba stack ----------------
+# Linux-only because ariba doesn't build on osx-arm64 (x86 SSE intrinsics in
+# its bundled C). On macOS this feature contributes nothing — the env stays
+# Python-only.
+[feature.runtime.target.linux-64.dependencies]
 bowtie2 = "*"
-samtools = "*"
+# samtools < 1.10: ariba uses `samtools mpileup -t INFO/AD,INFO/ADF,INFO/ADR`
+# which was removed in samtools 1.10. Newer samtools error with
+# "mpileup: invalid option -- 't'" and ariba's per-cluster workers die with
+# "Signal 15 received in cluster ...".
+samtools = "<1.10"
 mummer = "*"
 cd-hit = "*"
 spades = "*"
 sra-tools = "*"
-kleborate = ">=3.2"
 # ariba's __init__.py does `from pkg_resources import get_distribution`,
 # so it needs setuptools at runtime. Pinned <80: setuptools 80 removed the
 # long-deprecated `pkg_resources` module that ariba still imports.
 setuptools = "<80"
 
-[target.linux-64.pypi-dependencies]
+[feature.runtime.target.linux-64.pypi-dependencies]
 ariba = "*"
 
-# pymummer (an ARIBA dep) probes for nucmer on PATH at build time. With
-# build isolation enabled, pip's build venv doesn't see the conda-installed
-# mummer binaries and the build fails. Disabling isolation lets the build
-# see PATH from the active pixi env.
-[pypi-options]
-no-build-isolation = ["pymummer", "ariba"]
-
+# -------- dev feature: test + lint tooling --------------------------------
 [feature.dev.dependencies]
 pytest = "*"
 pytest-cov = "*"
 ruff = "*"
 pre-commit = "*"
 
+# -------- refbuild feature: kleborate for the one-off ref-DB vendoring ----
+# kleborate's transitive deps (ectyper -> samtools >=1.8) pull a newer samtools
+# than ariba can tolerate, so we keep this in its own env. Only used by
+# pp/build_ariba_ref.py; runtime doesn't need it.
+[feature.refbuild.target.linux-64.dependencies]
+kleborate = ">=3.2"
+
 [environments]
-default = { features = [], solve-group = "default" }
-dev = { features = ["dev"], solve-group = "default" }
+default = { features = ["runtime"], solve-group = "runtime" }
+dev = { features = ["runtime", "dev"], solve-group = "runtime" }
+refbuild = { features = ["refbuild"] }
