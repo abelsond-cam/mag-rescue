@@ -95,14 +95,20 @@ def _gene_basename(seq_name: str) -> str:
 def _build_metadata(inputs_root: Path, modules: list[tuple[str, str]]) -> str:
     """Emit the ARIBA prepareref metadata TSV.
 
-    Columns: sequence_name, gene_or_noncoding, variant_only, variant, description.
-    Every row: gene=1, variant_only=0, variant='.', description='<cluster>:<gene>'.
+    Six tab-separated columns per row, as expected by
+    ``ariba.sequence_metadata.SequenceMetadata``:
+
+        name, gene_or_noncoding, variant_only, variant, variant_id, free_text
+
+    Every row here: gene=1, variant_only=0, variant='.', variant_id='.',
+    free_text='<cluster>:<gene>'. Five-column rows are silently rejected by
+    ARIBA, leaving sequences orphaned in the FASTA.
     """
     rows: list[str] = []
     for mod, cluster in modules:
         for fasta in sorted((inputs_root / mod).glob("*.fasta")):
             for seq_name in _read_fasta_headers(fasta):
-                rows.append("\t".join([seq_name, "1", "0", ".", f"{cluster}:{_gene_basename(seq_name)}"]))
+                rows.append("\t".join([seq_name, "1", "0", ".", ".", f"{cluster}:{_gene_basename(seq_name)}"]))
     return "\n".join(rows) + "\n"
 
 

@@ -40,8 +40,9 @@ def test_build_metadata_emits_one_row_per_sequence_with_cluster_label(tmp_path: 
         [("klebsiella__abst", "iuc"), ("klebsiella__rmpa2", "rmp")],
     )
     rows = [r.split("\t") for r in tsv.strip().splitlines()]
+    # 6 columns: name, seq_type, variant_only, variant, variant_id, free_text
     assert rows == [
-        ["iucA_1", "1", "0", ".", "iuc:iucA"],
-        ["iucA_2", "1", "0", ".", "iuc:iucA"],
-        ["rmpA2_1", "1", "0", ".", "rmp:rmpA2"],
+        ["iucA_1", "1", "0", ".", ".", "iuc:iucA"],
+        ["iucA_2", "1", "0", ".", ".", "iuc:iucA"],
+        ["rmpA2_1", "1", "0", ".", ".", "rmp:rmpA2"],
     ]
