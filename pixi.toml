@@ -34,6 +34,9 @@ cd-hit = "*"
 spades = "*"
 sra-tools = "*"
 kleborate = ">=3.2"
+# ariba's __init__.py does `from pkg_resources import get_distribution`,
+# so it needs setuptools at runtime (modern Python conda envs don't bundle it).
+setuptools = "*"
 
 [target.linux-64.pypi-dependencies]
 ariba = "*"

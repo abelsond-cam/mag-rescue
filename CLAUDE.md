@@ -88,6 +88,7 @@ Pixi is the single dependency manager. ARIBA's binary deps (bowtie2, samtools, m
    ```
 
    Build isolation is then disabled for those two packages; pip uses the active pixi env (which has `mummer`) and the build sees `nucmer` on PATH. Without this entry, `pixi install -e dev` will fail on linux-64 with `Cannot install because some programs from the MUMer package not found`.
+4. **ARIBA needs `setuptools` at runtime.** Its `__init__.py` does `from pkg_resources import get_distribution`. `pkg_resources` ships in `setuptools`, which modern Python conda envs don't bundle by default. So `setuptools` is an explicit `[target.linux-64.dependencies]` entry; without it `ariba version` fails with `ModuleNotFoundError: No module named 'pkg_resources'`.
 
 Net effect: on macOS you can edit, lint, run unit tests, and import the package, but `pixi run` of anything that touches ARIBA only works on HPC. CI (linux-64) exercises the full pipeline.
 
