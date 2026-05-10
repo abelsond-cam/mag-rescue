@@ -38,6 +38,13 @@ kleborate = ">=3.2"
 [target.linux-64.pypi-dependencies]
 ariba = "*"
 
+# pymummer (an ARIBA dep) probes for nucmer on PATH at build time. With
+# build isolation enabled, pip's build venv doesn't see the conda-installed
+# mummer binaries and the build fails. Disabling isolation lets the build
+# see PATH from the active pixi env.
+[pypi-options]
+no-build-isolation = ["pymummer", "ariba"]
+
 [feature.dev.dependencies]
 pytest = "*"
 pytest-cov = "*"

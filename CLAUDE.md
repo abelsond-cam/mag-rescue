@@ -73,3 +73,34 @@ Idempotent: skip if output TSV exists.
 ## Env management
 
 Pixi is the single dependency manager. ARIBA's binary deps (bowtie2, samtools, mummer, cd-hit, spades) come from bioconda; `ariba` itself comes from PyPI. The lock file is multi-platform (osx-arm64 + linux-64) — same lock works locally and on HPC.
+
+### Platform split — local mac is for editing, HPC runs the pipeline
+
+`pixi.toml` declares two platforms: `osx-arm64` (local Apple Silicon dev) and `linux-64` (HPC + CI). The Python deps in the default `[dependencies]` table are cross-platform; the bioinformatics binaries and ARIBA itself are scoped to `[target.linux-64...]` only. Three reasons it has to be this way:
+
+1. **ARIBA does not build on Apple Silicon.** ARIBA bundles C code that uses x86 SSE intrinsics (`__m64`, `mmintrin.h`). `pip install ariba` on osx-arm64 fails with clang errors like "invalid conversion between vector type `__m64` and integer type". So `ariba` lives under `[target.linux-64.pypi-dependencies]`.
+2. **`kleborate` is linux-only on bioconda.** It depends on `stxtyper`, which currently has no osx-arm64 build. Since kleborate is only consumed at ref-build time (vendoring FASTAs into `refs/kleb_virulence/inputs/`), and that runs on HPC anyway, this is fine.
+3. **`pymummer` (an ARIBA dep) needs `nucmer` on PATH at build time, not just install time.** Its `setup.py` probes for the MUMmer binaries before the wheel is built and aborts if they aren't found. With pip's default *build isolation*, the build venv is fresh and doesn't see the conda-installed `mummer` binaries — the build fails. We work around this with:
+
+   ```toml
+   [pypi-options]
+   no-build-isolation = ["pymummer", "ariba"]
+   ```
+
+   Build isolation is then disabled for those two packages; pip uses the active pixi env (which has `mummer`) and the build sees `nucmer` on PATH. Without this entry, `pixi install -e dev` will fail on linux-64 with `Cannot install because some programs from the MUMer package not found`.
+
+Net effect: on macOS you can edit, lint, run unit tests, and import the package, but `pixi run` of anything that touches ARIBA only works on HPC. CI (linux-64) exercises the full pipeline.
+
+### Bringing up the env on a fresh machine
+
+```bash
+# one-time pixi install (skip if already on PATH)
+curl -fsSL https://pixi.sh/install.sh | bash
+
+cd <repo>
+pixi install -e dev   # solves and installs the dev env from pixi.lock
+pixi run -e dev test
+pixi run -e dev lint
+```
+
+On HPC, the same lockfile is used — pixi resolves the linux-64 entries from it. Pixi version on HPC must be ≥ the version that wrote the lockfile (lockfile schema v6 needs pixi 0.68+); update with `curl -fsSL https://pixi.sh/install.sh | bash` if older.
