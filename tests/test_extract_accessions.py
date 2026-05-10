@@ -114,3 +114,47 @@ def test_classify_row_unsupported_url_count():
         )
     )
     assert reason == "unsupported_url_count_1"
+
+
+def test_filter_with_sublineage_and_clonal_group(tmp_path):
+    """End-to-end filter test against a tiny synthetic metadata TSV."""
+    import csv
+
+    from mag_rescue.pp.extract_accessions import _filter_to_kleb_short_reads
+
+    rows = [
+        # header
+        [
+            "kpsc_final_list",
+            "is_refseq",
+            "run_accession",
+            "metadata.runs.instrument.platform",
+            "fastq_ftp",
+            "fastq_md5",
+            "Sublineage",
+            "Clonal group",
+        ],
+        # SL23 / CG23 — match
+        ["True", "False", "SRR_A", "ILLUMINA", "ftp.x/A_1.fastq.gz;ftp.x/A_2.fastq.gz", "m1;m2", "SL23", "CG23"],
+        # SL23 / CG39 — sublineage match but wrong CG
+        ["True", "False", "SRR_B", "ILLUMINA", "ftp.x/B_1.fastq.gz;ftp.x/B_2.fastq.gz", "m1;m2", "SL23", "CG39"],
+        # SL15 / CG39 — sublineage doesn't match
+        ["True", "False", "SRR_C", "ILLUMINA", "ftp.x/C_1.fastq.gz;ftp.x/C_2.fastq.gz", "m1;m2", "SL15", "CG39"],
+        # SL23 / CG23 but is_refseq — excluded by the kpsc/refseq filter
+        ["True", "True", "SRR_D", "ILLUMINA", "ftp.x/D_1.fastq.gz;ftp.x/D_2.fastq.gz", "m1;m2", "SL23", "CG23"],
+    ]
+    p = tmp_path / "meta.tsv"
+    with p.open("w", newline="") as fh:
+        csv.writer(fh, delimiter="\t", lineterminator="\n").writerows(rows)
+
+    inc_all, _ = _filter_to_kleb_short_reads(p)
+    assert {r[0] for r in inc_all} == {"SRR_A", "SRR_B", "SRR_C"}
+
+    inc_sl, _ = _filter_to_kleb_short_reads(p, sublineage="SL23")
+    assert {r[0] for r in inc_sl} == {"SRR_A", "SRR_B"}
+
+    inc_cg, _ = _filter_to_kleb_short_reads(p, clonal_group="CG39")
+    assert {r[0] for r in inc_cg} == {"SRR_B", "SRR_C"}
+
+    inc_both, _ = _filter_to_kleb_short_reads(p, sublineage="SL23", clonal_group="CG23")
+    assert {r[0] for r in inc_both} == {"SRR_A"}

@@ -32,6 +32,8 @@ COL_RUN_ACC = "run_accession"
 COL_FASTQ_FTP = "fastq_ftp"
 COL_FASTQ_MD5 = "fastq_md5"
 COL_PLATFORM = "metadata.runs.instrument.platform"
+COL_SUBLINEAGE = "Sublineage"
+COL_CLONAL_GROUP = "Clonal group"
 
 OUTPUT_HEADER = ["run_accession", "r1_url", "r2_url", "r1_md5", "r2_md5"]
 SKIPPED_HEADER = [
@@ -119,17 +121,37 @@ def _classify_row(row: dict[str, str]) -> tuple[list[str], str | None]:
     return [acc, r1_url, r2_url, r1_md5, r2_md5], None
 
 
-def _filter_to_kleb_short_reads(metadata_path: Path) -> tuple[list[list[str]], list[list[str]]]:
-    """Stream the metadata TSV and partition into included + skipped rows."""
+def _filter_to_kleb_short_reads(
+    metadata_path: Path,
+    *,
+    sublineage: str | None = None,
+    clonal_group: str | None = None,
+) -> tuple[list[list[str]], list[list[str]]]:
+    """Stream the metadata TSV and partition into included + skipped rows.
+
+    Optional ``sublineage`` and ``clonal_group`` further restrict the inclusion
+    set. Rows that pass kpsc/refseq but fail the SL/CG filter are simply not
+    written anywhere — they're not the same kind of "skip" as a malformed row.
+    """
+    required = (COL_KPSC, COL_REFSEQ, COL_RUN_ACC, COL_FASTQ_FTP, COL_FASTQ_MD5, COL_PLATFORM)
+    if sublineage is not None:
+        required = (*required, COL_SUBLINEAGE)
+    if clonal_group is not None:
+        required = (*required, COL_CLONAL_GROUP)
+
     included: list[list[str]] = []
     skipped: list[list[str]] = []
     with metadata_path.open(newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
-        for col in (COL_KPSC, COL_REFSEQ, COL_RUN_ACC, COL_FASTQ_FTP, COL_FASTQ_MD5, COL_PLATFORM):
+        for col in required:
             if col not in reader.fieldnames:
                 raise SystemExit(f"metadata TSV missing required column: {col}")
         for row in reader:
             if row.get(COL_KPSC) != "True" or row.get(COL_REFSEQ) != "False":
+                continue
+            if sublineage is not None and row.get(COL_SUBLINEAGE, "").strip() != sublineage:
+                continue
+            if clonal_group is not None and row.get(COL_CLONAL_GROUP, "").strip() != clonal_group:
                 continue
             out_row, reason = _classify_row(row)
             if reason is None:
@@ -175,6 +197,8 @@ def main() -> None:
     ap.add_argument("--metadata", type=Path, required=True, help="Bacotype's curated metadata TSV.")
     ap.add_argument("--outdir", type=Path, required=True, help="Where to write the three output files.")
     ap.add_argument("--version", default="v1", help="Filename suffix tag (default: v1).")
+    ap.add_argument("--sublineage", default=None, help="Optional: restrict to one Sublineage (e.g. SL23).")
+    ap.add_argument("--clonal-group", default=None, help="Optional: restrict to one Clonal group (e.g. CG39).")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -183,8 +207,17 @@ def main() -> None:
         logger.error("metadata not found: %s", args.metadata)
         sys.exit(1)
 
-    logger.info("Reading %s", args.metadata)
-    included, skipped = _filter_to_kleb_short_reads(args.metadata)
+    logger.info(
+        "Reading %s%s%s",
+        args.metadata,
+        f"  [Sublineage={args.sublineage}]" if args.sublineage else "",
+        f"  [Clonal group={args.clonal_group}]" if args.clonal_group else "",
+    )
+    included, skipped = _filter_to_kleb_short_reads(
+        args.metadata,
+        sublineage=args.sublineage,
+        clonal_group=args.clonal_group,
+    )
 
     base = f"kleb_short_reads_{args.version}"
     out_tsv = args.outdir / f"{base}.tsv"
