@@ -1,0 +1,7 @@
+source: /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_final_curated_all_samples_and_columns.tsv
+included: 73658
+skipped:  2057
+skip reasons:
+  multi_platform_or_multi_run      1955
+  no_run_accession                 101
+  no_fastq_ftp                     1
