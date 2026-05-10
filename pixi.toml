@@ -1,0 +1,49 @@
+[workspace]
+name = "mag-rescue"
+version = "0.1.0"
+description = "ARIBA-driven virulence/AMR profiling on Klebsiella short-read genomes"
+authors = ["David Abelson <dca36@cam.ac.uk>"]
+channels = ["conda-forge", "bioconda"]
+platforms = ["osx-arm64", "linux-64"]
+
+[tasks]
+test = "pytest tests/"
+lint = "ruff check src/ tests/ && ruff format --check src/ tests/"
+fmt = "ruff format src/ tests/"
+
+# Cross-platform Python deps (so local osx-arm64 dev can edit, lint, and unit-test).
+[dependencies]
+python = "3.12.*"
+pandas = ">=2.2"
+numpy = ">=1.26"
+biopython = ">=1.83"
+tqdm = ">=4.66"
+requests = ">=2.31"
+
+# Pure-Python project install — works everywhere.
+[pypi-dependencies]
+mag-rescue = { path = ".", editable = true }
+
+# Linux-only: ARIBA's binary deps + ariba itself + kleborate (stxtyper is linux-only).
+# Local osx-arm64 dev can't run the pipeline — production is HPC.
+[target.linux-64.dependencies]
+bowtie2 = "*"
+samtools = "*"
+mummer = "*"
+cd-hit = "*"
+spades = "*"
+sra-tools = "*"
+kleborate = ">=3.2"
+
+[target.linux-64.pypi-dependencies]
+ariba = "*"
+
+[feature.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+pre-commit = "*"
+
+[environments]
+default = { features = [], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }

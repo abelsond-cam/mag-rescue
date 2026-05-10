@@ -1,0 +1,37 @@
+# Temp files
+.DS_Store
+*~
+
+# Python
+.venv/
+__pycache__/
+.*cache/
+*.egg-info/
+
+# Distribution / packaging
+/dist/
+/build/
+
+# Tests and coverage
+/.coverage*
+htmlcov/
+
+# Pixi
+.pixi/
+
+# Run logs
+*.log
+*.out
+*.err
+/logs/
+
+# Saved images
+*.png
+
+# ARIBA reference build artefacts (rebuilt from inputs/ + metadata.tsv)
+refs/*/prepareref_out/
+
+# Scratch fastqs
+*.fastq.gz
+*.fq.gz
+/scratch/
