@@ -108,6 +108,40 @@ def test_build_sbatch_cmd_includes_subset_metadata_path(tmp_path: Path):
     assert f"SUBSET_METADATA={vip}" in export
 
 
+def test_build_sbatch_cmd_detailed_all_defaults_off(tmp_path: Path):
+    cmd = _build_sbatch_cmd(
+        repo_dir=Path("/repo"),
+        list_path=tmp_path / "list.tsv",
+        db="kleb_virulence",
+        run_dir=tmp_path / "rd",
+        slurm_logs_dir=tmp_path / "slurm_logs",
+        array_spec="1-1%1",
+        ariba_sif=Path("/sif/ariba.sif"),
+        subset_metadata=None,
+    )
+    export = next(a for a in cmd if a.startswith("--export="))
+    assert "DETAILED_ALL=" in export  # var present
+    # Empty value means "off" — slurm shim treats anything not "1" as off.
+    assert "DETAILED_ALL=,SUBSET" not in export  # syntax sanity
+    assert "DETAILED_ALL=1" not in export
+
+
+def test_build_sbatch_cmd_detailed_all_on(tmp_path: Path):
+    cmd = _build_sbatch_cmd(
+        repo_dir=Path("/repo"),
+        list_path=tmp_path / "list.tsv",
+        db="kleb_virulence",
+        run_dir=tmp_path / "rd",
+        slurm_logs_dir=tmp_path / "slurm_logs",
+        array_spec="1-1%1",
+        ariba_sif=Path("/sif/ariba.sif"),
+        subset_metadata=None,
+        detailed_all=True,
+    )
+    export = next(a for a in cmd if a.startswith("--export="))
+    assert "DETAILED_ALL=1" in export
+
+
 # ---------------------------------------------------------------------------
 # Auto-retry loop tests (pure logic; subprocess interaction injected via mocks)
 # ---------------------------------------------------------------------------

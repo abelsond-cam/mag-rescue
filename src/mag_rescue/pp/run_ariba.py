@@ -36,7 +36,19 @@ logger = logging.getLogger("run_ariba")
 
 # Output filenames ARIBA produces in its outdir we care to keep.
 ARIBA_REPORT = "report.tsv"
-ARIBA_DETAILED_FILES = ("assembled_seqs.fa.gz", "assemblies.fa.gz")
+
+# Files copied to RDS when --detailed is set. (filename, subdir-name) pairs.
+# Each lands at <run_dir>/<subdir>/<accession>.<rest-of-filename-after-first-dot>.
+# e.g. debug.report.tsv → debug_reports/<acc>.report.tsv
+#      log.clusters.gz  → cluster_logs/<acc>.clusters.gz
+# version_info.txt is skipped — identical per run.
+ARIBA_DETAILED_FILES = (
+    ("assembled_seqs.fa.gz", "assembled_seqs"),
+    ("assembled_genes.fa.gz", "assembled_genes"),
+    ("assemblies.fa.gz", "assemblies"),
+    ("debug.report.tsv", "debug_reports"),
+    ("log.clusters.gz", "cluster_logs"),
+)
 
 # Repo root (..../mag_rescue/mag-rescue/), used to resolve the prepareref dir.
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -82,6 +94,17 @@ def _atomic_copy(src: Path, dest: Path) -> None:
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     shutil.copy2(src, tmp)
     tmp.replace(dest)
+
+
+def _detailed_dest(run_dir: Path, accession: str, fname: str, subdir: str) -> Path:
+    """Compose the per-sample destination for one ARIBA --detailed output file.
+
+    Splits ``fname`` on the first ``.`` to separate the descriptor from the
+    extension, e.g. ``debug.report.tsv`` → ``debug_reports/<acc>.report.tsv``,
+    ``assembled_seqs.fa.gz`` → ``assembled_seqs/<acc>.fa.gz``.
+    """
+    _, ext = fname.split(".", 1)
+    return run_dir / subdir / f"{accession}.{ext}"
 
 
 def _prepareref_dir(db: str) -> Path:
@@ -183,13 +206,12 @@ def _run(
     logger.info("wrote %s", report_dest.relative_to(run_dir))
 
     if detailed:
-        for fname in ARIBA_DETAILED_FILES:
+        for fname, subdir in ARIBA_DETAILED_FILES:
             src = ariba_out / fname
             if not src.is_file():
                 logger.warning("--detailed requested but %s missing — skipping", fname)
                 continue
-            dest = run_dir / fname.split(".", 1)[0] / f"{accession}.{fname.split('.', 1)[1]}"
-            # e.g. assembled_seqs.fa.gz -> <run_dir>/assembled_seqs/<acc>.fa.gz
+            dest = _detailed_dest(run_dir, accession, fname, subdir)
             _atomic_copy(src, dest)
             logger.info("wrote %s", dest.relative_to(run_dir))
 

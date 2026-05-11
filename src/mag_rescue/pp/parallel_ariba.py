@@ -98,6 +98,7 @@ def _build_sbatch_cmd(
     array_spec: str,
     ariba_sif: Path,
     subset_metadata: Path | None,
+    detailed_all: bool = False,
 ) -> list[str]:
     """Compose the sbatch command. Returns the argv list (subprocess-ready)."""
     sbatch_script = repo_dir / SBATCH_SCRIPT_RELPATH
@@ -106,7 +107,8 @@ def _build_sbatch_cmd(
     export = (
         f"ALL,LIST_FILE={list_path},DB={db},RUN_DIR={run_dir},"
         f"REPO_DIR={repo_dir},ARIBA_SIF={ariba_sif},"
-        f"SUBSET_METADATA={subset_metadata or ''}"
+        f"SUBSET_METADATA={subset_metadata or ''},"
+        f"DETAILED_ALL={'1' if detailed_all else ''}"
     )
     return [
         "sbatch",
@@ -302,6 +304,7 @@ def _make_retry_submit_fn(args: argparse.Namespace, list_path: Path) -> Callable
             array_spec=array_spec,
             ariba_sif=args.ariba_sif,
             subset_metadata=args.subset_metadata,
+            detailed_all=args.detailed_all,
         )
         jobid = _submit_sbatch(cmd, dry_run=False)
         if jobid is None:
@@ -336,6 +339,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         array_spec=array_spec,
         ariba_sif=args.ariba_sif,
         subset_metadata=args.subset_metadata,
+        detailed_all=args.detailed_all,
     )
     logger.info("array spec: %s  (n_total=%d, n_samples=%d)", array_spec, n_total, args.n_samples)
 
@@ -404,6 +408,7 @@ def cmd_retry(args: argparse.Namespace) -> int:
         array_spec=array_spec,
         ariba_sif=args.ariba_sif,
         subset_metadata=args.subset_metadata,
+        detailed_all=args.detailed_all,
     )
     logger.info("retry %d failed indices from job %s (array spec: %s)", len(indices), args.job_id, array_spec)
     initial_jobid = _submit_sbatch(cmd, dry_run=args.dry_run)
@@ -428,6 +433,11 @@ def _add_shared_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--list-filename", default=DEFAULT_LIST_FILENAME)
     p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     p.add_argument("--subset-metadata", type=Path, default=None)
+    p.add_argument(
+        "--detailed-all",
+        action="store_true",
+        help="Pass --detailed to every worker (keeps full ARIBA output per sample).",
+    )
     p.add_argument("--dry-run", action="store_true")
     # Auto-retry loop: by default, after the initial sbatch the process blocks
     # waiting for completion, then re-submits any transient failures (most are

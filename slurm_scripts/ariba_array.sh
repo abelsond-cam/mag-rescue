@@ -23,6 +23,8 @@
 # Optional:
 #   SUBSET_METADATA   absolute path to a one-column file of accessions; matching
 #                     accessions get --detailed
+#   DETAILED_ALL      set to "1" to pass --detailed to every worker
+#                     (independent of SUBSET_METADATA)
 #
 # This script: parses line $SLURM_ARRAY_TASK_ID + 1 of $LIST_FILE (skipping
 # the header), invokes the Python worker with $SLURM_TMPDIR as scratch, and
@@ -36,6 +38,7 @@ set -euo pipefail
 : "${REPO_DIR:?REPO_DIR not set}"
 : "${ARIBA_SIF:?ARIBA_SIF not set}"
 : "${SUBSET_METADATA:=}"
+: "${DETAILED_ALL:=}"
 : "${SLURM_ARRAY_TASK_ID:?must run as a Slurm array job}"
 : "${SLURM_CPUS_PER_TASK:=4}"
 
@@ -60,7 +63,9 @@ if [[ -z "${ACC}" || -z "${R1_URL}" || -z "${R2_URL}" || -z "${R1_MD5}" || -z "$
 fi
 
 DETAILED_FLAG=""
-if [[ -n "${SUBSET_METADATA}" && -f "${SUBSET_METADATA}" ]]; then
+if [[ "${DETAILED_ALL}" == "1" ]]; then
+    DETAILED_FLAG="--detailed"
+elif [[ -n "${SUBSET_METADATA}" && -f "${SUBSET_METADATA}" ]]; then
     if grep -Fxq "${ACC}" "${SUBSET_METADATA}"; then
         DETAILED_FLAG="--detailed"
     fi
