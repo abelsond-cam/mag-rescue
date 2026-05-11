@@ -45,6 +45,18 @@ def test_array_spec_indices_handles_explicit_list():
     assert _array_spec_indices([3, 17, 42], concurrency=20) == "3,17,42%20"
 
 
+def test_array_spec_indices_collapses_consecutive_runs():
+    """Slurm rejects too-long --array= strings — range-collapse to fit under 4KB."""
+    # Consecutive runs collapsed to N-M
+    assert _array_spec_indices([1, 2, 3, 4, 5], concurrency=10) == "1-5%10"
+    # Mix of singletons, pairs, and longer runs
+    assert _array_spec_indices([3, 5, 6, 8, 9, 10, 50], concurrency=5) == "3,5-6,8-10,50%5"
+    # Two-element run still emits N-M (not N,M)
+    assert _array_spec_indices([7, 8], concurrency=1) == "7-8%1"
+    # De-dup + sort
+    assert _array_spec_indices([5, 3, 5, 4], concurrency=2) == "3-5%2"
+
+
 def test_parse_jobid_finds_id():
     assert _parse_jobid("Submitted batch job 29154321\n") == "29154321"
     assert _parse_jobid("error: nothing here") is None

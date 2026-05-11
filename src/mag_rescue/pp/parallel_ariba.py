@@ -113,8 +113,28 @@ def _array_spec_range(n_total: int, n_samples: int, concurrency: int) -> str:
 
 
 def _array_spec_indices(indices: list[int], concurrency: int) -> str:
-    """Build a `i,j,k%M` array spec from a list of explicit indices."""
-    return f"{','.join(str(i) for i in indices)}%{concurrency}"
+    """Build a Slurm array spec from a list of indices, collapsing consecutive runs.
+
+    Consecutive indices become `N-M` ranges (e.g. `2272-2277`) instead of being
+    enumerated individually. CSD3 transient curl failures during high-concurrency
+    ENA fetches tend to cluster in long runs, so the unfolded comma-list can
+    blow past Slurm's argv length limit (~4 KB) — at which point sbatch returns
+    "Pathname of a file, directory or other parameter too long". Range collapse
+    typically halves the spec length and keeps the same task set.
+    """
+    if not indices:
+        return f"%{concurrency}"
+    sorted_idx = sorted(set(indices))
+    runs: list[str] = []
+    start = prev = sorted_idx[0]
+    for i in sorted_idx[1:]:
+        if i == prev + 1:
+            prev = i
+            continue
+        runs.append(f"{start}-{prev}" if prev > start else str(start))
+        start = prev = i
+    runs.append(f"{start}-{prev}" if prev > start else str(start))
+    return f"{','.join(runs)}%{concurrency}"
 
 
 def _parse_jobid(stdout: str) -> str | None:
