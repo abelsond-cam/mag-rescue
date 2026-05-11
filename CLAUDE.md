@@ -33,6 +33,15 @@ pixi run -e dev python -m mag_rescue.pp.parallel_ariba submit \
     --repo-dir ~/workspace/mag-rescue \
     --ariba-sif <RDS>/.../containers/ariba_213.sif
 
+# After the array completes, clear transient curl-rc=56 failures with a retry pass.
+# Same args plus --job-id of the prior run; the orchestrator re-submits only failed
+# indices (using N-M range-collapsed Slurm array spec).
+pixi run -e dev python -m mag_rescue.pp.parallel_ariba retry --job-id <JOBID> \
+    --db kleb_virulence --run-name <cohort> \
+    --mag-rescue-root <RDS>/.../processed/mag_rescue \
+    --repo-dir ~/workspace/mag-rescue \
+    --ariba-sif <RDS>/.../containers/ariba_213.sif
+
 # After completion: tally + compare to Bacotype's penetrance.
 pixi run -e dev python -m mag_rescue.tl.assess_recovery \
     --ariba-run-dir <RDS>/.../mag_rescue/kleb_virulence/<cohort> \
