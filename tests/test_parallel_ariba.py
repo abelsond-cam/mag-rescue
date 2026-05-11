@@ -14,6 +14,7 @@ from mag_rescue.pp.parallel_ariba import (
     _count_data_rows,
     _list_path,
     _parse_jobid,
+    _retry_loop,
     _run_dir,
     _slurm_logs_dir,
     _write_list_for_test,
@@ -105,3 +106,118 @@ def test_build_sbatch_cmd_includes_subset_metadata_path(tmp_path: Path):
     )
     export = next(a for a in cmd if a.startswith("--export="))
     assert f"SUBSET_METADATA={vip}" in export
+
+
+# ---------------------------------------------------------------------------
+# Auto-retry loop tests (pure logic; subprocess interaction injected via mocks)
+# ---------------------------------------------------------------------------
+
+
+def _states_factory(scripts: list[list[tuple[int, str]]]):
+    """Build a states_fn that returns successive scripted state lists per call."""
+    calls = {"i": 0}
+
+    def states_fn(_jobid: str) -> list[tuple[int, str]]:
+        i = calls["i"]
+        result = scripts[min(i, len(scripts) - 1)]
+        calls["i"] += 1
+        return result
+
+    return states_fn
+
+
+def test_retry_loop_clear_on_first_wave():
+    """Initial wave has zero failures → status=clear, no retry submitted."""
+    submitted: list[list[int]] = []
+
+    def retry_submit(failed: list[int]) -> str:
+        submitted.append(failed)
+        return f"job-retry-{len(submitted)}"
+
+    result = _retry_loop(
+        initial_jobid="job-1",
+        max_retries=3,
+        wait_fn=lambda _: None,
+        states_fn=_states_factory([[(1, "COMPLETED"), (2, "COMPLETED")]]),
+        retry_submit_fn=retry_submit,
+    )
+    assert result["status"] == "clear"
+    assert len(result["waves"]) == 1
+    assert submitted == []
+
+
+def test_retry_loop_clears_after_retries():
+    """Wave 0: 3 failed. Wave 1: 1 failed. Wave 2: clear. Returns clear."""
+    submitted: list[list[int]] = []
+
+    def retry_submit(failed: list[int]) -> str:
+        submitted.append(failed)
+        return f"job-retry-{len(submitted)}"
+
+    result = _retry_loop(
+        initial_jobid="job-1",
+        max_retries=3,
+        wait_fn=lambda _: None,
+        states_fn=_states_factory(
+            [
+                [(1, "COMPLETED"), (2, "FAILED"), (3, "FAILED"), (4, "FAILED"), (5, "COMPLETED")],
+                [(2, "COMPLETED"), (3, "FAILED"), (4, "COMPLETED")],
+                [(3, "COMPLETED")],
+            ]
+        ),
+        retry_submit_fn=retry_submit,
+    )
+    assert result["status"] == "clear"
+    assert len(result["waves"]) == 3
+    assert submitted == [[2, 3, 4], [3]]  # two retry submissions, with shrinking failed sets
+
+
+def test_retry_loop_stops_on_no_progress():
+    """If failed count doesn't shrink between waves, declare no_progress."""
+    submitted: list[list[int]] = []
+
+    def retry_submit(failed: list[int]) -> str:
+        submitted.append(failed)
+        return f"job-retry-{len(submitted)}"
+
+    result = _retry_loop(
+        initial_jobid="job-1",
+        max_retries=5,
+        wait_fn=lambda _: None,
+        states_fn=_states_factory(
+            [
+                [(1, "FAILED"), (2, "FAILED"), (3, "COMPLETED")],
+                [(1, "FAILED"), (2, "FAILED"), (3, "COMPLETED")],  # same failures
+            ]
+        ),
+        retry_submit_fn=retry_submit,
+    )
+    assert result["status"] == "no_progress"
+    assert len(result["waves"]) == 2
+    assert submitted == [[1, 2]]  # one retry attempt before declaring no progress
+
+
+def test_retry_loop_respects_max_retries():
+    """If failures keep shrinking but never reach zero, stop at max_retries."""
+    submitted: list[list[int]] = []
+
+    def retry_submit(failed: list[int]) -> str:
+        submitted.append(failed)
+        return f"job-retry-{len(submitted)}"
+
+    # Wave 0: 5 failed, wave 1: 4, wave 2: 3, wave 3: 2 (max=2 allows up to 3 waves: 0,1,2 cycle)
+    result = _retry_loop(
+        initial_jobid="job-1",
+        max_retries=2,
+        wait_fn=lambda _: None,
+        states_fn=_states_factory(
+            [
+                [(i, "FAILED") for i in range(5)],
+                [(i, "FAILED") for i in range(4)],
+                [(i, "FAILED") for i in range(3)],
+            ]
+        ),
+        retry_submit_fn=retry_submit,
+    )
+    assert result["status"] == "max_retries"
+    assert len(result["waves"]) == 3  # initial + 2 retries

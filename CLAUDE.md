@@ -26,17 +26,12 @@ pixi run -e dev python -m mag_rescue.pp.extract_accessions \
     --outdir   <RDS>/.../processed/mag_rescue/kleb_virulence/<cohort>/accessions \
     --version v1 [--sublineage SL23 | --clonal-group CG39]
 
-# Submit a Slurm array (uses parallel_ariba.py to compose sbatch).
+# Submit a Slurm array. By default the orchestrator blocks waiting for
+# completion and re-submits any transient failures (ENA curl rate-limit
+# blips) up to --max-retries times (default 3). Run under tmux or nohup
+# when invoking via ssh so the loop survives a disconnect. Add --no-auto-retry
+# for one-shot submission, or --dry-run to print the sbatch command only.
 pixi run -e dev python -m mag_rescue.pp.parallel_ariba submit \
-    --db kleb_virulence --run-name <cohort> \
-    --mag-rescue-root <RDS>/.../processed/mag_rescue \
-    --repo-dir ~/workspace/mag-rescue \
-    --ariba-sif <RDS>/.../containers/ariba_213.sif
-
-# After the array completes, clear transient curl-rc=56 failures with a retry pass.
-# Same args plus --job-id of the prior run; the orchestrator re-submits only failed
-# indices (using N-M range-collapsed Slurm array spec).
-pixi run -e dev python -m mag_rescue.pp.parallel_ariba retry --job-id <JOBID> \
     --db kleb_virulence --run-name <cohort> \
     --mag-rescue-root <RDS>/.../processed/mag_rescue \
     --repo-dir ~/workspace/mag-rescue \

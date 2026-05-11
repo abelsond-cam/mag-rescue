@@ -1,8 +1,10 @@
 """Slurm orchestrator for the per-sample ARIBA array.
 
-Builds the sbatch command for a `kleb_short_reads_<ver>.tsv` list file and
-submits it (or prints it via ``--dry-run``). Runs on the login node — does
-not itself process samples.
+Submits the array, then by default waits for completion and re-submits any
+transient failures (most are ENA curl-rc=56 rate-limit blips that clear on
+retry). Loops until everything clears, no progress is made between waves,
+or ``--max-retries`` (default 3) is hit. Pass ``--no-auto-retry`` to revert
+to one-shot behaviour.
 
 Subcommands
 -----------
@@ -10,20 +12,26 @@ submit    — sbatch a fresh array (optionally capped via ``--n-samples``).
 status    — tally per-state counts + cross-check report.tsv presence.
 retry     — sbatch only the indices that failed in a prior job.
 
+Because the process blocks for the duration of the cohort with auto-retry on,
+run under ``nohup`` or ``tmux`` when invoking via ssh.
+
 Usage
 -----
     pixi run -e dev python -m mag_rescue.pp.parallel_ariba submit \
         --db kleb_virulence --run-name all \
         --mag-rescue-root <RDS>/processed/mag_rescue \
         --repo-dir ~/workspace/mag-rescue \
+        --ariba-sif <RDS>/.../containers/ariba_213.sif \
         [--n-samples 10] [--subset-metadata <vip-list>] \
-        [--concurrency 100] [--dry-run]
+        [--concurrency 100] [--max-retries 3] [--poll-interval 60] \
+        [--no-auto-retry] [--dry-run]
 
     pixi run -e dev python -m mag_rescue.pp.parallel_ariba status --job-id 29154321
     pixi run -e dev python -m mag_rescue.pp.parallel_ariba retry  --job-id 29154321 \
         --db kleb_virulence --run-name all \
         --mag-rescue-root <RDS>/processed/mag_rescue \
-        --repo-dir ~/workspace/mag-rescue
+        --repo-dir ~/workspace/mag-rescue \
+        --ariba-sif <RDS>/.../containers/ariba_213.sif
 """
 
 from __future__ import annotations
@@ -35,13 +43,17 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 logger = logging.getLogger("parallel_ariba")
 
 DEFAULT_CONCURRENCY = 100
 DEFAULT_LIST_FILENAME = "kleb_short_reads_v1.tsv"
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_POLL_INTERVAL_S = 60
 SBATCH_SCRIPT_RELPATH = "slurm_scripts/ariba_array.sh"
 
 FAILED_STATES = {"FAILED", "TIMEOUT", "CANCELLED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"}
@@ -181,12 +193,131 @@ def _failed_indices(job_id: str) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
+# Wait + auto-retry loop
+# ---------------------------------------------------------------------------
+
+
+def _wait_for_job_completion(job_id: str, *, poll_interval: int) -> None:
+    """Block until ``squeue -j <job_id>`` returns empty.
+
+    Transient ``squeue`` failures (returncode != 0) are treated as "still
+    running" — we don't want to declare the job done just because the
+    Slurm daemon was briefly unreachable.
+    """
+    while True:
+        res = subprocess.run(
+            ["squeue", "-j", job_id, "-h"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0 and not res.stdout.strip():
+            return
+        time.sleep(poll_interval)
+
+
+def _submit_sbatch(cmd: list[str], *, dry_run: bool) -> str | None:
+    """Run sbatch, parse jobid from its stdout. Returns None on dry-run.
+
+    Raises RuntimeError if sbatch exits non-zero or stdout doesn't contain
+    a jobid the regex can match.
+    """
+    logger.info("sbatch cmd:\n  %s", " \\\n  ".join(cmd))
+    if dry_run:
+        logger.info("--dry-run set; not submitting")
+        return None
+    res = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    sys.stdout.write(res.stdout)
+    sys.stderr.write(res.stderr)
+    if res.returncode != 0:
+        raise RuntimeError(f"sbatch failed rc={res.returncode}")
+    job_id = _parse_jobid(res.stdout)
+    if not job_id:
+        raise RuntimeError(f"sbatch succeeded but no jobid parsed from:\n{res.stdout}")
+    return job_id
+
+
+def _retry_loop(
+    initial_jobid: str,
+    *,
+    max_retries: int,
+    wait_fn: Callable[[str], None],
+    states_fn: Callable[[str], list[tuple[int, str]]],
+    retry_submit_fn: Callable[[list[int]], str],
+) -> dict:
+    """Wait→tally→retry until clear, no-progress, or max retries.
+
+    Pure logic — all subprocess interaction is delegated to the three
+    injected callables so this can be unit-tested with mocks.
+
+    Returns a dict with ``status`` (one of ``clear``, ``no_progress``,
+    ``max_retries``) and ``waves``: a list of per-wave dicts
+    ``{"jobid", "completed", "failed"}``.
+    """
+    jobid = initial_jobid
+    last_failed_count: int | None = None
+    waves: list[dict] = []
+    for cycle in range(max_retries + 1):  # 0 = initial wave; up to max_retries retries
+        wait_fn(jobid)
+        states = states_fn(jobid)
+        failed = sorted(idx for idx, st in states if st in FAILED_STATES)
+        completed = sum(1 for _, st in states if st == "COMPLETED")
+        waves.append({"jobid": jobid, "completed": completed, "failed": len(failed)})
+        logger.info(
+            "wave %d (job %s): %d completed, %d failed",
+            cycle,
+            jobid,
+            completed,
+            len(failed),
+        )
+        if not failed:
+            return {"status": "clear", "waves": waves}
+        if last_failed_count is not None and len(failed) >= last_failed_count:
+            logger.info(
+                "auto-retry: no progress (%d failed previously, %d now) — stopping",
+                last_failed_count,
+                len(failed),
+            )
+            return {"status": "no_progress", "waves": waves}
+        last_failed_count = len(failed)
+        if cycle >= max_retries:
+            logger.info("auto-retry: reached max retries (%d), %d still failed", max_retries, len(failed))
+            return {"status": "max_retries", "waves": waves}
+        jobid = retry_submit_fn(failed)
+        logger.info("auto-retry: wave %d submitted as job %s", cycle + 1, jobid)
+    return {"status": "max_retries", "waves": waves}  # unreachable but keeps mypy happy
+
+
+def _make_retry_submit_fn(args: argparse.Namespace, list_path: Path) -> Callable[[list[int]], str]:
+    """Bind args + list_path into a callable suitable for ``_retry_loop``."""
+
+    def retry_submit(failed_indices: list[int]) -> str:
+        array_spec = _array_spec_indices(failed_indices, args.concurrency)
+        cmd = _build_sbatch_cmd(
+            repo_dir=args.repo_dir,
+            list_path=list_path,
+            db=args.db,
+            run_dir=_run_dir(args.mag_rescue_root, args.db, args.run_name),
+            slurm_logs_dir=_slurm_logs_dir(args.mag_rescue_root),
+            array_spec=array_spec,
+            ariba_sif=args.ariba_sif,
+            subset_metadata=args.subset_metadata,
+        )
+        jobid = _submit_sbatch(cmd, dry_run=False)
+        if jobid is None:
+            raise RuntimeError("retry sbatch returned no jobid (unexpected, dry_run=False)")
+        return jobid
+
+    return retry_submit
+
+
+# ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
 
 def cmd_submit(args: argparse.Namespace) -> int:
-    """Sbatch a fresh array."""
+    """Sbatch a fresh array; if ``--auto-retry`` (the default), loop until clear."""
     list_path = _list_path(args.mag_rescue_root, args.db, args.run_name, args.list_filename)
     if not list_path.is_file():
         logger.error("list file missing: %s", list_path)
@@ -207,20 +338,29 @@ def cmd_submit(args: argparse.Namespace) -> int:
         subset_metadata=args.subset_metadata,
     )
     logger.info("array spec: %s  (n_total=%d, n_samples=%d)", array_spec, n_total, args.n_samples)
-    logger.info("sbatch cmd:\n  %s", " \\\n  ".join(cmd))
 
-    if args.dry_run:
-        logger.info("--dry-run set; not submitting")
-        return 0
     _slurm_logs_dir(args.mag_rescue_root).mkdir(parents=True, exist_ok=True)
-    res = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    sys.stdout.write(res.stdout)
-    sys.stderr.write(res.stderr)
-    if res.returncode != 0:
-        return res.returncode
-    job_id = _parse_jobid(res.stdout)
-    if job_id:
-        logger.info("submitted job %s — track with `parallel_ariba status --job-id %s`", job_id, job_id)
+    initial_jobid = _submit_sbatch(cmd, dry_run=args.dry_run)
+    if initial_jobid is None:  # dry-run
+        return 0
+    logger.info("submitted job %s — `parallel_ariba status --job-id %s` to track", initial_jobid, initial_jobid)
+
+    if not args.auto_retry:
+        return 0
+    return _run_retry_loop_for_args(initial_jobid, args, list_path)
+
+
+def _run_retry_loop_for_args(initial_jobid: str, args: argparse.Namespace, list_path: Path) -> int:
+    """Glue between argparse args and the pure _retry_loop. Returns exit code."""
+    poll_interval = args.poll_interval
+    result = _retry_loop(
+        initial_jobid,
+        max_retries=args.max_retries,
+        wait_fn=lambda jobid: _wait_for_job_completion(jobid, poll_interval=poll_interval),
+        states_fn=_sacct_states,
+        retry_submit_fn=_make_retry_submit_fn(args, list_path),
+    )
+    logger.info("auto-retry finished: status=%s, waves=%d", result["status"], len(result["waves"]))
     return 0
 
 
@@ -245,7 +385,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_retry(args: argparse.Namespace) -> int:
-    """Re-submit only the indices that failed in a prior job."""
+    """Re-submit only the indices that failed in a prior job; loop if ``--auto-retry``."""
     indices = _failed_indices(args.job_id)
     if not indices:
         logger.info("no failed indices for job %s — nothing to retry", args.job_id)
@@ -265,15 +405,13 @@ def cmd_retry(args: argparse.Namespace) -> int:
         ariba_sif=args.ariba_sif,
         subset_metadata=args.subset_metadata,
     )
-    logger.info("retry %d failed indices from job %s", len(indices), args.job_id)
-    logger.info("array spec: %s", array_spec)
-    logger.info("sbatch cmd:\n  %s", " \\\n  ".join(cmd))
-    if args.dry_run:
+    logger.info("retry %d failed indices from job %s (array spec: %s)", len(indices), args.job_id, array_spec)
+    initial_jobid = _submit_sbatch(cmd, dry_run=args.dry_run)
+    if initial_jobid is None:
         return 0
-    res = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    sys.stdout.write(res.stdout)
-    sys.stderr.write(res.stderr)
-    return res.returncode
+    if not args.auto_retry:
+        return 0
+    return _run_retry_loop_for_args(initial_jobid, args, list_path)
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +429,25 @@ def _add_shared_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     p.add_argument("--subset-metadata", type=Path, default=None)
     p.add_argument("--dry-run", action="store_true")
+    # Auto-retry loop: by default, after the initial sbatch the process blocks
+    # waiting for completion, then re-submits any transient failures (most are
+    # ENA curl-rc=56 rate-limit hits that clear on retry). Loops until everything
+    # clears, no progress is made between waves, or --max-retries is hit.
+    # Run under nohup/tmux when invoking via ssh because the python process
+    # blocks for the duration of the cohort.
+    p.add_argument(
+        "--auto-retry",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Wait for the array to complete and auto-retry transient failures (default: on).",
+    )
+    p.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="Max retry waves (default: 3).")
+    p.add_argument(
+        "--poll-interval",
+        type=int,
+        default=DEFAULT_POLL_INTERVAL_S,
+        help="Seconds between squeue polls (default: 60).",
+    )
 
 
 def main() -> None:
